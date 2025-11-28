@@ -2,7 +2,6 @@ import hashlib
 import json
 from flask import Flask, request, render_template_string, jsonify
 import datetime
-from collections import deque
 import random
 
 app = Flask(__name__)
@@ -67,10 +66,10 @@ for node in NODE_LOCATIONS:
         **node, "status": "Natural", "probs": [1.0, 0.0, 0.0], "fire": False, "last_update": "Waiting..."
     }
 
-# FIX 1: Use a standard List instead of Deque(maxlen) so count keeps growing
+# FIX: Use a List (unlimited) instead of Deque (limited)
 event_history = [] 
 
-# Pre-fill data
+# Pre-fill with dummy data for visual check
 curr = datetime.datetime.now()
 for i in range(50):
     t = curr - datetime.timedelta(seconds=(50-i)*2)
@@ -100,7 +99,7 @@ def ussd_callback():
     if text == "":
         response = "CON BUNDI Reporter \n1. Illegal Logging \n2. Charcoal Burning \n3. Encroachment"
     elif len(inputs) == 1:
-        response = "CON Select Location Code (0-14) \n 0.Buyangu Hill \n 1.Kisere Fragment \n 2.Isiukhu River \n 3.Salazar Circuit \n 4.Isecheno Station \n 5.Lirhanda Hill \n 6.Yala River Border \n 7.Kibiri Block \n 8.Malava Edge \n 9.Ikuywa River East \n 10.Pump House Sector \n 11.Kaimosi Border \n 12.Mukumu West Gate \n 13.Cheenya Edge \n 14.Colobus Trail Inner"
+        response = "CON Select Location Code (0-14) \n 0.Buyangu Hill \n 1.Kisere Fragment \n 2.Isiukhu River \n 3.Salazar Circuit \n 								 	4.Isecheno Station \n 5.Lirhanda Hill \n 6.Yala River Border \n 7.Kibiri Block \n 8.Malava Edge \n 9.Ikuywa River East \n 10.Pump House Sector \n 11.Kaimosi Border \n 12.Mukumu West Gate \n 13.Cheenya Edge \n 14.Colobus Trail Inner"
     elif len(inputs) == 2:
         try:
             r_type = {"1":"Logging", "2":"Charcoal", "3":"Encroachment"}.get(inputs[0], "General")
@@ -109,28 +108,26 @@ def ussd_callback():
                 target = NODE_LOCATIONS[n_id]
                 anon_id = hashlib.sha256(phone.encode()).hexdigest()[:8]
                 
-                # 1. Add to Blockchain Ledger
+                # 1. Add to Blockchain
                 prev = community_ledger.get_previous_block()
                 data = {"issue": r_type, "loc": target['name'], "lat": target['lat'], "lng": target['lng'], "reporter": anon_id}
                 community_ledger.create_block(100, community_ledger.hash(prev), data)
                 
-                # FIX 2: Register as a Main Alert Event
+                # 2. Register as Alert Event (Updates UI & History)
                 ts = datetime.datetime.now().strftime("%H:%M:%S")
                 status_msg = f"Community Report: {r_type}"
                 
-                # Update Node State (So it shows in the Sidebar)
                 node_states[n_id].update({ 
                     "status": status_msg, 
-                    "probs": [0.0, 0.0, 0.0], # Irrelevant for manual report
+                    "probs": [0.0, 0.0, 0.0], 
                     "fire": False, 
                     "last_update": ts 
                 })
                 
-                # Append to History (So it counts in Total Events & Charts)
                 event_history.append({ 
                     "node_id": n_id, 
                     "time": ts, 
-                    "status": "Community", # Simplified status for charting
+                    "status": "Community", 
                     "probs": [0.0, 0.0, 0.0], 
                     "fire": False 
                 })
@@ -188,7 +185,7 @@ HTML_TEMPLATE = """
         .node-card.Natural { border-left-color: var(--nat); }
         .node-card.Unnatural { border-left-color: var(--unn); }
         .node-card.Human { border-left-color: var(--hum); }
-        /* Community Card Style */
+        /* Community Style */
         .node-card.Community { border-left-color: var(--comm); border-right: 1px solid var(--comm); }
 
         .card-top { display: flex; justify-content: space-between; font-weight: 700; font-size: 1rem; }
@@ -375,9 +372,7 @@ HTML_TEMPLATE = """
         const container = document.getElementById('node-list-container');
         let html = '';
         const sorted = Object.values(nodes).sort((a,b) => {
-            // Sort by priority: Fire > Community > Unnatural > Human > Natural
             const rank = { 'Fire': 5, 'Community Report': 4, 'Unnatural': 3, 'Human Sound': 2, 'Natural': 1 };
-            // Map status text (e.g., "Community Report: Logging") to generic key "Community Report"
             let aKey = a.status.includes('Community') ? 'Community Report' : a.status;
             let bKey = b.status.includes('Community') ? 'Community Report' : b.status;
             return (rank[bKey]||0) - (rank[aKey]||0);
@@ -412,7 +407,6 @@ HTML_TEMPLATE = """
         if(!lineChart || !doughChart) return;
         const relevant = selectedNodeId !== null ? history.filter(h => h.node_id === selectedNodeId) : history;
         
-        // --- 1. Total Counts (Unlimited) ---
         let c = { Natural:0, Unnatural:0, Human:0, Fire:0, Community:0 };
         relevant.forEach(h => { 
             if(h.fire) c.Fire++; 
@@ -426,7 +420,6 @@ HTML_TEMPLATE = """
         doughChart.data.datasets[0].data = [c.Natural, c.Unnatural, c.Human, c.Fire, c.Community];
         doughChart.update('none');
 
-        // --- 2. Timeline (Last 60 only) ---
         const recent = relevant.slice(-60);
         const last = recent.length ? recent[recent.length-1] : null;
         const threatEl = document.getElementById('stat-threat');
@@ -448,7 +441,7 @@ HTML_TEMPLATE = """
         lineChart.data.datasets[0].data = recent.map(h => h.status === 'Natural' ? h.probs[0] : null);
         lineChart.data.datasets[1].data = recent.map(h => h.status === 'Unnatural' ? h.probs[1] : null);
         lineChart.data.datasets[2].data = recent.map(h => h.status === 'Human Sound' ? h.probs[2] : null);
-        lineChart.data.datasets[3].data = recent.map(h => h.status === 'Community' ? 1.0 : null); // Report = 100% confidence
+        lineChart.data.datasets[3].data = recent.map(h => h.status === 'Community' ? 1.0 : null);
         
         lineChart.update('none');
     }
@@ -474,5 +467,27 @@ HTML_TEMPLATE = """
     }
 </script>
 </body>
-</html> 
+</html>
 """
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    return jsonify({ "nodes": node_states, "history": list(event_history), "ledger": community_ledger.chain })
+
+@app.route('/alert', methods=['POST'])
+def receive_alert():
+    d = request.json
+    t_id = next((n["id"] for n in node_states.values() if n["lat"] == d.get('lat') and n["lng"] == d.get('lng')), None)
+    if t_id is not None:
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        node_states[t_id].update({ "status": d['class'], "probs": d['probs'], "fire": d['fire'], "last_update": ts })
+        event_history.append({ "node_id": t_id, "time": ts, "status": d['class'], "probs": d['probs'], "fire": d['fire'] })
+        return "OK", 200
+    return "404", 404
+
+if __name__ == '__main__':
+    app.run(port=5000, debug=True)
